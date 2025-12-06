@@ -25,6 +25,7 @@ error() { echo -e "${ERROR} $1"; exit 1; }
 info() { echo -e "${INFO} $1"; }
 
 show_banner() {
+    clear
     echo ""
     echo -e "${PURPLE}══════════════════════════${NC}"
     echo -e "${PURPLE}█ Snell 代理服务安装工具 █${NC}"
@@ -172,21 +173,61 @@ create_config() {
         
         echo -e "  端口: ${CYAN}$port${NC}"
         echo -e "  密钥: ${CYAN}$psk${NC}"
-    else
-        log "创建新配置文件..."
-        local port=$(generate_random_port)
-        local psk=$(generate_psk)
         
-        cat > "$config_path" << EOF
-[snell-server]
-listen = 0.0.0.0:$port
-psk = $psk
-ipv6 = false
-EOF
-        success "配置文件已创建: ${GREEN}$config_path${NC}"
-        echo -e "  端口: ${CYAN}$port${NC}"
-        echo -e "  密钥: ${CYAN}$psk${NC}"
+        read -p "$(echo -e "是否重新生成配置文件? [y/N]: ")" reconfig
+        if [[ ! "$reconfig" =~ ^[yY] ]]; then
+            return
+        fi
     fi
+
+    log "配置 Snell..."
+    echo -e "${GREEN}1.${NC} 随机生成配置"
+    echo -e "${GREEN}2.${NC} 手动输入配置"
+    read -p "请选择 [1-2] (默认: 1): " config_choice
+    
+    local port
+    local psk
+    
+    case "$config_choice" in
+        2)
+            while true; do
+                read -p "请输入端口 [${GREEN}1024-65535${NC}]: " port
+                if [[ "$port" -ge 1024 && "$port" -le 65535 ]]; then
+                    if lsof -i:$port >/dev/null 2>&1; then
+                        warning "端口 $port 已被占用，请尝试其他端口"
+                    else
+                        break
+                    fi
+                else
+                    warning "无效端口，请输入 ${GREEN}1024-65535${NC} 之间的数字"
+                fi
+            done
+            
+            read -p "请输入密钥 (PSK): " psk
+            if [[ -z "$psk" ]]; then
+                psk=$(generate_psk)
+                info "密钥为空，已自动生成: $psk"
+            fi
+            ;;
+        *)
+            port=$(generate_random_port)
+            psk=$(generate_psk)
+            ;;
+    esac
+    
+    cat > "$config_path" << EOF
+[snell-server]
+listen = ::0:$port
+psk = $psk
+ipv6 = true
+obfs = off
+dns = 1.1.1.1, 8.8.8.8, 2001:4860:4860::8888
+EOF
+    success "配置文件已更新: ${GREEN}$config_path${NC}"
+    echo -e "  端口: ${CYAN}$port${NC}"
+    echo -e "  密钥: ${CYAN}$psk${NC}"
+    echo -e "  IPv6: ${CYAN}开启${NC}"
+    echo -e "  DNS:  ${CYAN}1.1.1.1, 8.8.8.8, 2001:4860:4860::8888${NC}"
 }
 
 # 创建systemd服务文件
@@ -231,25 +272,58 @@ EOF
     success "服务文件创建完成"
 }
 
-# 显示帮助信息
-show_help() {
-    show_banner
-    echo -e "${CYAN}【使用说明】${NC}"
-    echo -e "用法: $0 [选项]"
-    echo ""
-    echo -e "${YELLOW}选项:${NC}"
-    echo -e "  --install        安装/更新 Snell 服务"
-    echo -e "  --uninstall      卸载 Snell 服务"
-    echo -e "  --dir <目录>     指定配置文件目录 (默认: /etc/snell)"
-    echo -e "  --port <端口>    指定端口 (仅限新安装)"
-    echo -e "  --psk <密钥>     指定密钥 (仅限新安装)"
-    echo -e "  --help           显示帮助信息"
-    echo ""
+# 显示配置信息
+show_config_info() {
+    if systemctl is-active --quiet "$SERVICE_NAME"; then
+        local config_path="${CONFIG_DIR}/${SERVICE_CONFIG_FILE}"
+        if [[ -f "$config_path" ]]; then
+            local port=$(grep "listen" "$config_path" | awk -F: '{print $NF}')
+            local psk=$(grep "psk" "$config_path" | awk -F= '{print $2}' | tr -d ' ')
+            local ip=$(curl -s4 ifconfig.me || echo "无法获取IP")
+            
+            echo -e "${CYAN}════════════════════════════════════════════════${NC}"
+            echo -e "  ${GREEN}Snell 配置信息${NC}"
+            echo -e "${CYAN}════════════════════════════════════════════════${NC}"
+            echo -e "  地址: ${YELLOW}$ip${NC}"
+            echo -e "  端口: ${YELLOW}$port${NC}"
+            echo -e "  密钥: ${YELLOW}$psk${NC}"
+            echo -e "  版本: ${YELLOW}v5${NC}"
+            echo -e "${CYAN}════════════════════════════════════════════════${NC}"
+            echo ""
+            echo -e "Surge 配置示例:"
+            echo -e "Proxy = snell, $ip, $port, psk=$psk, version=5"
+            echo ""
+        else
+            warning "配置文件不存在"
+        fi
+    else
+        warning "Snell 服务未运行"
+    fi
+}
+
+# 安装/更新 Snell
+install_snell() {
+    check_dependencies
+    get_arch
+    info "系统架构: ${GREEN}$ARCH${NC}"
+    
+    update_snell
+    create_config
+    create_service
+    
+    log "启动服务..."
+    systemctl enable --now "$SERVICE_NAME"
+    
+    if systemctl is-active --quiet "$SERVICE_NAME"; then
+        success "Snell 服务启动成功！"
+        show_config_info
+    else
+        error "服务启动失败，请检查日志: journalctl -u $SERVICE_NAME -f"
+    fi
 }
 
 # 卸载服务
 uninstall_service() {
-    show_banner
     log "开始卸载 Snell 服务..."
     
     if systemctl is-active --quiet "$SERVICE_NAME" 2>/dev/null; then
@@ -274,61 +348,86 @@ uninstall_service() {
     fi
 }
 
+# 服务管理函数
+start_service() {
+    log "启动 Snell 服务..."
+    systemctl start "$SERVICE_NAME"
+    if systemctl is-active --quiet "$SERVICE_NAME"; then
+        success "服务已启动"
+        show_config_info
+    else
+        error "启动失败"
+    fi
+}
+
+stop_service() {
+    log "停止 Snell 服务..."
+    systemctl stop "$SERVICE_NAME"
+    success "服务已停止"
+}
+
+restart_service() {
+    log "重启 Snell 服务..."
+    systemctl restart "$SERVICE_NAME"
+    if systemctl is-active --quiet "$SERVICE_NAME"; then
+        success "服务已重启"
+        show_config_info
+    else
+        error "重启失败"
+    fi
+}
+
+view_logs() {
+    log "查看最近 20 行日志..."
+    journalctl -u "$SERVICE_NAME" -n 20 --no-pager
+}
+
+# 主菜单
+show_menu() {
+    while true; do
+        show_banner
+        echo -e "  ${GREEN}1.${NC} 安装 / 更新 Snell"
+        echo -e "  ${GREEN}2.${NC} 卸载 Snell"
+        echo -e "  ${GREEN}3.${NC} 启动服务"
+        echo -e "  ${GREEN}4.${NC} 停止服务"
+        echo -e "  ${GREEN}5.${NC} 重启服务"
+        echo -e "  ${GREEN}6.${NC} 查看配置"
+        echo -e "  ${GREEN}7.${NC} 查看日志"
+        echo -e "  ${RED}0.${NC} 退出脚本"
+        echo ""
+        read -p "$(echo -e "请选择操作 [${GREEN}0-7${NC}]: ")" choice
+        
+        case "$choice" in
+            1) install_snell ;;
+            2) uninstall_service ;;
+            3) start_service ;;
+            4) stop_service ;;
+            5) restart_service ;;
+            6) show_config_info ;;
+            7) view_logs ;;
+            0) exit 0 ;;
+            *) echo -e "${WARNING} 无效选择，请重试" ;;
+        esac
+        
+        echo ""
+        read -p "按回车键返回主菜单..."
+    done
+}
+
 # 主程序
 main() {
-    # 解析参数
-    local action="install"
-    
-    while [[ $# -gt 0 ]]; do
+    # 如果有参数，仍然支持简单的参数处理（可选，为了兼容性）
+    if [[ $# -gt 0 ]]; then
         case $1 in
-            --install) action="install"; shift ;;
-            --uninstall) action="uninstall"; shift ;;
-            --dir) CONFIG_DIR="$2"; shift 2 ;;
-            --help) show_help; exit 0 ;;
-            *) echo -e "${WARNING}未知选项: $1"; show_help; exit 1 ;;
+            --install) install_snell ;;
+            --uninstall) uninstall_service ;;
+            --help) show_menu ;;
+            *) show_menu ;;
         esac
-    done
-    
-    if [[ "$action" == "uninstall" ]]; then
-        uninstall_service
         exit 0
     fi
-    
-    show_banner
-    check_dependencies
-    get_arch
-    info "系统架构: ${GREEN}$ARCH${NC}"
-    
-    update_snell
-    create_config
-    create_service
-    
-    log "启动服务..."
-    systemctl enable --now "$SERVICE_NAME"
-    
-    if systemctl is-active --quiet "$SERVICE_NAME"; then
-        success "Snell 服务启动成功！"
-        echo ""
-        echo -e "${CYAN}════════════════════════════════════════════════${NC}"
-        echo -e "  ${GREEN}Snell 配置信息${NC}"
-        echo -e "${CYAN}════════════════════════════════════════════════${NC}"
-        local config_path="${CONFIG_DIR}/${SERVICE_CONFIG_FILE}"
-        local port=$(grep "listen" "$config_path" | awk -F: '{print $NF}')
-        local psk=$(grep "psk" "$config_path" | awk -F= '{print $2}' | tr -d ' ')
-        local ip=$(curl -s4 ifconfig.me)
-        
-        echo -e "  地址: ${YELLOW}$ip${NC}"
-        echo -e "  端口: ${YELLOW}$port${NC}"
-        echo -e "  密钥: ${YELLOW}$psk${NC}"
-        echo -e "  版本: ${YELLOW}v5${NC}"
-        echo -e "${CYAN}════════════════════════════════════════════════${NC}"
-        echo ""
-        echo -e "Surge 配置示例:"
-        echo -e "Proxy = snell, $ip, $port, psk=$psk, version=5"
-        echo ""
-    else
-        error "服务启动失败，请检查日志: journalctl -u $SERVICE_NAME -f"
-    fi
+
+    show_menu
 }
 
 main "$@"
