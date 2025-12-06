@@ -240,7 +240,7 @@ show_help() {
     echo -e "${YELLOW}选项:${NC}"
     echo -e "  --install        安装/更新 Snell 服务"
     echo -e "  --uninstall      卸载 Snell 服务"
-    echo -e "  --dir <目录>     指定配置文件目录 (默认: /root/proxy)"
+    echo -e "  --dir <目录>     指定配置文件目录 (默认: /etc/snell)"
     echo -e "  --port <端口>    指定端口 (仅限新安装)"
     echo -e "  --psk <密钥>     指定密钥 (仅限新安装)"
     echo -e "  --help           显示帮助信息"
