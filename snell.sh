@@ -26,9 +26,9 @@ info() { echo -e "${INFO} $1"; }
 
 show_banner() {
     echo ""
-    echo -e "${PURPLE}═══════════════════════${NC}"
+    echo -e "${PURPLE}════════════════════════${NC}"
     echo -e "${PURPLE}█ Snell 代理服务安装工具 █${NC}"
-    echo -e "${PURPLE}═══════════════════════${NC}"
+    echo -e "${PURPLE}════════════════════════${NC}"
     echo ""
 }
 
