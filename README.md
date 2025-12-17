@@ -10,7 +10,7 @@ bash <(curl -fsSL v.gd/snell)
 bash <(curl -fsSL https://raw.githubusercontent.com/wmsyw/Shell/refs/heads/main/debian_upgrade.sh)
 ```
 
-## anytls脚本
+## AnyTLS脚本
 ```
 bash <(curl -fsSL https://raw.githubusercontent.com/wmsyw/Shell/refs/heads/main/anytls.sh)
 ```
